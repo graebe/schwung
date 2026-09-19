@@ -2197,6 +2197,18 @@
       "default_branch": "master",
       "asset_name": "acid-module.tar.gz",
       "min_host_version": "1.2.0"
+    },
+    {
+      "id": "trance-gate",
+      "name": "Trance Gate",
+      "description": "Tempo-locked step gate with per-step ADSR, ties and pad editing",
+      "author": "graebe",
+      "component_type": "audio_fx",
+      "subcategory": "modulation",
+      "github_repo": "graebe/schwung-trance-gate",
+      "default_branch": "main",
+      "asset_name": "trance-gate-module.tar.gz",
+      "min_host_version": "1.0.0"
     }
   ]
 }
