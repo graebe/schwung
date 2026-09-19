@@ -884,6 +884,37 @@ in `src/shadow/shadow_ui.js`.** The load-bearing claims, so you know when to loo
   the PLAIN key, so a module serving its own driven value was never asked; and
   **the shim skips `render_block` on a silent slot** (one probe frame in 172),
   so an effective value computed there looks frozen until something plays.
+- **A curve is DECLARED, never read off an option name** — `viz.shapes` maps
+  an enum's options positionally onto an easing vocabulary
+  (`curve_shape.mjs`). The fleet spells one idea five ways (`Exp` / `Expo` /
+  `exponential` / `Quadratic` / `Convex`), `Soft`/`Hard` says nothing
+  definite, and minijv spells a *filter resonance mode* that way — so a
+  matcher would draw a taper for something that has no shape.
+  `lfoShapeIdOf` is the cautionary one: an unrecognised name returns shape 0
+  and draws a plausible wrong picture, which is how `swishy` drew a sine.
+  **Do not add a name-matching fallback.**
+- **The `overrides` tier of `resolveViz` was documented, tested and WIRED TO
+  NOTHING.** `page_controller` read `io.vizOverrides` and no call site ever
+  set one, so surge's six envelope stage-shape knobs moved nothing on screen
+  for want of a table. `viz_overrides.mjs` supplies it now. Its branch used
+  to read a strictly smaller field set than `collectDeclared` — a field added
+  to one path alone works for every module we ship and silently does nothing
+  for the ones we do not, which is exactly the set the table exists for.
+  `promoteGroupFields` is the one definition both call;
+  `test_viz_override_parity.sh` fails if they drift.
+- **An envelope can `invert` and its stages can bend, and declaring neither
+  must be pixel-identical.** Inversion is not a mirror of the finished
+  picture: `fillCurveMass` was handed peak/zero as its CLIP bounds, which
+  collapses an inverted envelope to one row, and the mass is bounded by
+  SILENCE — the band floor in both orientations, not `zeroY`.
+- **The curve stroke is PER COLUMN, and that is measured.**
+  `tools/param-pages/curve_bench.mjs`: per-column cost is bounded by the
+  number of distinct y values (13 at band height), so it is flat in width and
+  exact, while the cheapest pixel-exact polyline saves 4 calls and `step`
+  never reaches 0px error at any budget. And the fill outweighs the stroke
+  up to 37:1 and does not change with curvature — so a sample-count knob
+  would tune the cheap half. There isn't one; don't add one without re-running
+  the bench.
 - **A module may declare SEVERAL widgets, and for a long time exactly one
   registered.** The registry was always a Map; the single call site read
   `ov.widgetKind`, one *string*, so a second declared kind was dropped — and a

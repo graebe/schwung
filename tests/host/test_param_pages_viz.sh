@@ -65,7 +65,8 @@ Promise.all([
   import("./src/shared/param_pages/render_page.mjs"),
   import("./src/shared/param_pages/viz.mjs"),
   import("node:fs"),
-]).then(([H, C, P, M, R, V, fs]) => {
+  import("./src/shared/param_pages/viz_overrides.mjs"),
+]).then(([H, C, P, M, R, V, fs, O]) => {
   const fail = (msg) => { console.log("FAIL: " + msg); process.exit(1); };
   const fx = JSON.parse(fs.readFileSync(C.FIXTURE, "utf8"));
   const SNAPSHOT = "tests/fixtures/snapshots/param_pages_viz.txt";
@@ -79,10 +80,17 @@ Promise.all([
   for (const mod of fx.modules) {
     const metaIndex = M.buildMetaIndex({ hierarchy: mod.ui_hierarchy, chainParams: mod.chain_params });
     const { pages } = P.planPages({ hierarchy: mod.ui_hierarchy, chainParams: mod.chain_params });
+    /* WITH the host override table, because that is what the device resolves
+     * -- shadow_ui_param_pages supplies exactly this callback. Snapshotting
+     * without it would leave the one authoring path we cannot iterate on (the
+     * module belongs to someone else) as the only one with no fleet-level
+     * coverage, and its failure mode is a picture that silently did not
+     * change. A `source` of `override` in the snapshot is the table working. */
+    const overrides = O.vizOverridesFor(mod.id);
     for (let i = 0; i < pages.length; i++) {
       const page = pages[i];
       if (page.kind !== P.PAGE_KNOBS) continue;
-      const { groups } = V.resolveViz({ keys: page.keys, metaIndex });
+      const { groups } = V.resolveViz({ keys: page.keys, metaIndex, overrides });
       for (const g of groups) {
         lines.push(`${mod.id}\t${page.name}\t${g.kind}\t${g.source}\t${g.keys.join(",")}`);
       }

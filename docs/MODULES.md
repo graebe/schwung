@@ -1715,6 +1715,10 @@ Add an optional `viz` object to a `chain_params` entry:
 | `group` | An id shared by every param in one graphic. Any string; scoped to the module. Omit for single-param graphics. |
 | `role` | This param's part in the group. Required when `group` is set. |
 | `kind` | The graphic type. Optional — derived from the roles present when omitted. |
+| `span` | `false` lends the graphic this param's VALUE without joining the run of cells it covers — the param keeps its own control. |
+| `extra_keys` | Values the picture needs that have no cell on the page. Max 4; one read-rotation stop each. |
+| `invert` | `true`: the envelope's rest state is FULL and its stages describe a departure downward. |
+| `shapes` | For a curve selector — the positional map from this enum's options onto easing ids. |
 | `viz: false` | Never draw a graphic for this param, whatever a detector thinks. |
 
 Kinds and their roles:
@@ -1729,6 +1733,47 @@ Kinds and their roles:
 | `fader` | *(single param)* | A level/volume, drawn as a fader rather than a dial. |
 | `switch` | *(single param)* | A `toggle` or **boolean-flavoured** two-option enum, drawn as an on/off switch. See the note below — not every two-option enum qualifies, and it changes the behaviour as well as the picture. |
 | `sample` | *(single param)* + optional `position` | A `filepath`; a companion `wav_position` param marks playback position on the waveform. |
+| `curve` | *(single param)* | An enum selecting a transfer curve, drawn as that curve. Needs `shapes` — see below. |
+
+#### Curves: `shapes`, and why there is no name matching
+
+An enum that selects a transfer curve says which shape in words, and the words
+do not agree across the fleet — `Exp`, `Expo`, `exponential`, `Quadratic` and
+`Convex` all mean "slow start", while `Soft`/`Hard` means nothing definite at
+all and minijv spells a *filter resonance mode* that way. So the host never
+reads an option name and decides what it means. **You supply the mapping**,
+positionally, against your own option list:
+
+```json
+{ "key": "curve", "type": "enum", "options": ["Linear","Expo","S-Curve","Pump"],
+  "viz": { "kind": "curve",
+           "shapes": ["linear", "in2", "inout", { "attack": "linear", "release": "out3" }] } }
+```
+
+| id | shape | |
+|----|-------|---|
+| `linear` | `t` | the identity, and what anything unrecognised falls back to |
+| `in2` / `in3` | `t²` / `t³` | ease-in, convex, slow start |
+| `out2` / `out3` | `1-(1-t)²` / `1-(1-t)³` | ease-out, concave, fast start |
+| `inout` | `t²(3-2t)` | smoothstep — an S-curve |
+| `outin` | — | the inverse S: fast, flat, fast |
+| `step` | — | a staircase |
+
+An entry is an id, **or an object naming one per stage** when the shape is not
+symmetric — a pumping ducker is linear on the way down and cubic-out on the way
+back up, and one id cannot say that.
+
+Inside an **envelope group** the same field gives a stage its curvature. Use a
+`curve` role for one selector covering every stage, or `curve_attack`,
+`curve_decay` and `curve_release` for a selector each — which is the shape
+surge has, with a Shape knob beside every stage time. Mark the selector
+`span: false` so it keeps its own cell and the graphic still spans only the
+times.
+
+`validate.mjs` reports an easing id outside this list, a `shapes` array whose
+length disagrees with `options`, and any `viz` field nothing reads — every one
+of which otherwise draws no curvature, silently and indistinguishably from
+having declared nothing.
 
 **A `switch` is not just a picture — it suppresses the option list.** Turning an
 enum knob normally flashes its options up over the grid for ~700ms. A switch
@@ -3071,6 +3116,15 @@ cannot span the label band between row 0 and row 1.
 | fader | a level | ![viz-fader](images/widgets/viz-fader.png) |
 | switch | `enum` Off/On **or** `int` 0..1 | ![viz-switch](images/widgets/viz-switch.png) |
 | sample | a file plus positions within it | ![viz-sample](images/widgets/viz-sample.png) |
+| curve | one transfer-curve enum, mapped by `shapes` | ![viz-curve](images/widgets/viz-curve.png) |
+
+An envelope can also say two things about its own shape. Neither is inferred;
+both are declared, and declaring neither draws exactly what it always did.
+
+| | | |
+|---|---|---|
+| `invert: true` | the rest state is FULL and the stages depart downward — a ducker, a gate, a tremolo | ![viz-envelope-inverted](images/widgets/viz-envelope-inverted.png) |
+| a `curve` role | per-stage easing, so a Shape knob beside a stage time actually bends it | ![viz-envelope-curved](images/widgets/viz-envelope-curved.png) |
 
 - **An optional role is dropped when it does not fit.** `detectFilter` used to
   require every role it found to be contiguous, so a Mode knob parked at the far

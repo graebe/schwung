@@ -1512,6 +1512,69 @@ read as a coverage hole, exactly like the prefetch's two guards.
 plain page costs 16 reads — twice the entry budget, and a mutant that survived
 the first version of this test.
 
+### A CURVE is declared, and the override tier that carried it was never wired
+
+Seventeen enums across nine fleet modules select a transfer curve. Eight of
+them sit on a page where an envelope graphic is already drawn and affect it in
+no way at all: surge's `env1_attack_shape` / `env1_decay_shape` /
+`env1_release_shape`, the same three for `env2`, freak's `cycle_shape`, and
+the ducker's `curve`. Surge is the case that settles the design — it declares
+a Shape enum *beside every stage time*, lays them out perfectly (ADSR on row
+0, the shapes directly beneath), and `drawFullAdsr` drew four straight lines.
+
+**The mapping is DECLARED, positionally, and no name is ever matched.** The
+fleet spells one idea five ways, `Soft`/`Hard` is ambiguous, and minijv's
+`Soft`/`Hard` is a filter resonance mode a matcher would draw a taper for.
+`lfoShapeIdOf` is the standing warning: an unrecognised name falls to `return
+0` and draws a plausible wrong picture. `curve_shape.mjs` holds the
+vocabulary; `viz.shapes` holds each module's own map onto it.
+
+**A stage's own selector beats a whole-envelope one**, because both shapes
+exist in the fleet — one `curve` role for the ducker, `curve_attack` /
+`curve_decay` / `curve_release` for surge. And an entry may name a curve PER
+STAGE, because the ducker's `Pump` is linear down and cubic-out up; a flat id
+list cannot say that, and retrofitting the object form would have changed the
+meaning of an array element modules had already shipped.
+
+**`resolveViz` has always taken an `overrides` callback and nothing ever
+supplied one.** It is documented in MODULES.md, asserted in
+`test_param_pages_viz.sh`, read by `page_controller` as `io.vizOverrides` —
+and the whole tier was inert, which is why surge's knobs could sit dead
+through every release. `viz_overrides.mjs` is the table and
+`shadow_ui_param_pages` binds it. Two traps came with it:
+
+- **The override branch read a strictly smaller field set** — `group`, `role`,
+  `kind`, with the raw object discarded, so no `span`, no `extra_keys`. A
+  field added to the declared path alone works for every module we ship and
+  silently does nothing for the ones we do not, which is precisely the set
+  the table exists to serve. `promoteGroupFields` is now the single
+  definition both branches call, and `test_viz_override_parity.sh` fails on
+  drift.
+- **The module id costs an IPC read**, and `resolveViz` asks its callback per
+  KEY — eight reads on a plan frame against a budget of one. It is read once
+  on ENTRY instead (`readVizModuleId`), so the callback is pure cache. The
+  price is that an unsettled channel at entry means the detector's picture
+  for that visit; the same trade the widget latch makes, and the right
+  direction to fail in.
+
+**An inverted envelope is not a mirror of the finished picture.** `invert`
+swaps which band edge the stages depart from, and three things assumed
+`top < bottom`: `fillCurveMass` was handed peak/zero as its CLIP pair — which
+collapses the whole graphic to one row — and the knockout insets and dot
+clamps carried a hard-coded direction. The mass is bounded by SILENCE, and
+silence is the band FLOOR in both orientations, not `zeroY`; filling to
+`zeroY` once inverted shades the notch instead of the signal, i.e. exactly
+the complement of what a fill means everywhere else on the page.
+
+**The stroke is per column, and the sample-count knob was measured away.**
+`tools/param-pages/curve_bench.mjs`: `drawStepCurve` coalesces equal-y runs,
+so its cost is bounded by the number of distinct y values — 13 at band height
+— and is therefore flat in width and pixel-exact. The cheapest exact polyline
+saves four calls for 33 curve evaluations, and `step` never reaches 0px error
+at any budget. Meanwhile the CHECKER fill outweighs the stroke by up to 37:1
+and does not change with curvature. A sample-count parameter would have tuned
+the cheap half of a cost the fill dominates.
+
 ### A module-supplied widget draws into a FRAME, and cannot name a screen pixel
 
 A module can replace one cell's graphic with its own drawing. It declares the

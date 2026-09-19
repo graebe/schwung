@@ -383,6 +383,33 @@ function build() {
         ["attack", "decay", "sustain", "release"],
         { attack: "0.2", decay: "0.4", sustain: "0.6", release: "0.5" }, 4));
 
+    /* The envelope again, with the two things it learned: a stage that bends
+     * and a shape that falls. Drawn beside the plain one above so the manual
+     * shows what a declaration buys rather than only that the feature exists. */
+    add("viz-envelope-curved", vizStrip(
+        [F("attack", { viz: { group: "e", role: "attack" } }),
+         F("decay", { viz: { group: "e", role: "decay" } }),
+         F("sustain", { viz: { group: "e", role: "sustain" } }),
+         F("release", { viz: { group: "e", role: "release" } }),
+         { key: "shape", name: "Shape", type: "enum", options: ["Linear", "Convex"],
+           viz: { group: "e", role: "curve", span: false, shapes: ["linear", "in2"] } }],
+        ["attack", "decay", "sustain", "release", "shape"],
+        { attack: "0.2", decay: "0.4", sustain: "0.6", release: "0.5", shape: "Convex" }, 4));
+
+    add("viz-envelope-inverted", vizStrip(
+        [F("attack", { viz: { group: "d", role: "attack", invert: true } }),
+         F("hold", { viz: { group: "d", role: "hold" } }),
+         F("release", { viz: { group: "d", role: "release" } }),
+         F("depth", { viz: { group: "d", role: "sustain", span: false } })],
+        ["attack", "hold", "release", "depth"],
+        { attack: "0.1", hold: "0.3", release: "0.6", depth: "1" }, 3));
+
+    add("viz-curve", vizStrip(
+        [{ key: "morph_curve", name: "Curve", type: "enum",
+           options: ["Linear", "Exp", "Log", "S-Curve"],
+           viz: { kind: "curve", shapes: ["linear", "in2", "out2", "inout"] } }],
+        ["morph_curve"], { morph_curve: "S-Curve" }, 1));
+
     add("viz-filter", vizStrip(
         [F("cutoff"), F("resonance")], ["cutoff", "resonance"],
         { cutoff: "0.55", resonance: "0.7" }, 2));
@@ -601,6 +628,15 @@ cannot span the label band between row 0 and row 1.
 | fader | a level | ${img("viz-fader")} |
 | switch | \`enum\` Off/On **or** \`int\` 0..1 | ${img("viz-switch")} |
 | sample | a file plus positions within it | ${img("viz-sample")} |
+| curve | one transfer-curve enum, mapped by \`shapes\` | ${img("viz-curve")} |
+
+An envelope can also say two things about its own shape. Neither is inferred;
+both are declared, and declaring neither draws exactly what it always did.
+
+| | | |
+|---|---|---|
+| \`invert: true\` | the rest state is FULL and the stages depart downward — a ducker, a gate, a tremolo | ${img("viz-envelope-inverted")} |
+| a \`curve\` role | per-stage easing, so a Shape knob beside a stage time actually bends it | ${img("viz-envelope-curved")} |
 
 - **An optional role is dropped when it does not fit.** \`detectFilter\` used to
   require every role it found to be contiguous, so a Mode knob parked at the far

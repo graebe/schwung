@@ -57,6 +57,7 @@ import { invalidateLedCache } from '/data/UserData/schwung/shared/input_filter.m
  * shadow_ui.js is the only file in the shadow UI that node never imports. */
 import { wavPeaksTick, wavPeaksDone } from '/data/UserData/schwung/shared/param_pages/wav_peaks.mjs';
 import { VIZ_SAMPLE } from '/data/UserData/schwung/shared/param_pages/viz.mjs';
+import { vizOverridesFor } from '/data/UserData/schwung/shared/param_pages/viz_overrides.mjs';
 import { flipsOnClick, isTurnable } from '/data/UserData/schwung/shared/param_pages/param_meta.mjs';
 import { announce } from '/data/UserData/schwung/shared/screen_reader.mjs';
 import { log, isLoggingEnabled } from '/data/UserData/schwung/shared/logger.mjs';
@@ -299,6 +300,22 @@ export function enterParamPages(slot, component, prefix, restorePageName, io, ch
          * supplies one, and it would be spread over if something did.
          */
         controller = createController(Object.assign({
+            /*
+             * HOST CORRECTIONS for modules that cannot declare their own viz.
+             *
+             * resolveViz has always accepted this and page_controller has
+             * always read it; nothing ever supplied one, so the whole
+             * override tier was inert. Surge's six envelope stage-shape knobs
+             * moved nothing on screen for want of this.
+             *
+             * Resolved per call rather than bound at construction: the
+             * controller outlives a component switch, and a table captured
+             * here would go on answering for the module loaded at the time.
+             */
+            vizOverrides: (key) => {
+                const table = vizOverridesForCurrentModule();
+                return table ? table(key) : null;
+            },
             getParam: (key) => ctx.getSlotParam(currentSlot, key),
             /* A write while Record is lit and the clip phase is UNKNOWN records
              * no lane, and the user has to be told -- Record lit plus a moving
@@ -357,6 +374,9 @@ export function enterParamPages(slot, component, prefix, restorePageName, io, ch
     /* Entering the view is the only way the module behind it can have changed,
      * so this is where the cached abbreviation is dropped. */
     _abbrevCache = null;
+    _vizModuleIdCache = null;
+    /* Eagerly, here and nowhere else — see readVizModuleId. */
+    readVizModuleId();
     /* New module behind the view — it may well implement is_loading even if
      * the last one didn't, so start asking at full rate again. */
     _loadingInterval = LOADING_POLL_TICKS;
@@ -689,6 +709,38 @@ let _loadingInterval = LOADING_POLL_TICKS;
 /* Module id per (slot, component), read once instead of on every draw — it
  * changes only on a module swap, which goes through openParamPages. */
 let _abbrevCache = null;
+/* The module id behind the view, for the viz override table. Cached for the
+ * same reason the abbreviation is: reading it costs an IPC round trip
+ * (~2.8ms, against a 1.68ms whole-page render) and resolveViz asks on every
+ * re-plan -- which a gating knob triggers on every detent. */
+let _vizModuleIdCache = null;
+
+/**
+ * Read the module id ONCE, on entry, for the viz override table.
+ *
+ * NOT lazily from the callback. resolveViz asks its override callback per
+ * KEY, so a read in there is eight reads on a plan frame -- against a budget
+ * of one, which `tests/host/test_param_pages_view.sh` pins and which exists
+ * because an IPC round trip is ~2.8ms against a 1.68ms whole-page render.
+ * Entry is the only moment the module behind the view can have changed, and
+ * it is already where the header drops its own cached name.
+ *
+ * The cost of reading here rather than lazily is that an unsettled channel at
+ * entry means no overrides for this visit -- the module keeps the detector's
+ * picture until you leave and come back. That is the same trade the widget
+ * latch makes, and the honest direction to fail in: a stale-but-correct
+ * graphic, never a wrong one, and never a read on the draw path.
+ */
+function readVizModuleId() {
+    const moduleKey = (currentChrome && currentChrome.moduleKey)
+        || `${currentPrefix}_module`;
+    _vizModuleIdCache = ctx.getSlotParam(currentSlot, moduleKey) || "";
+}
+
+/** The override callback, pure cache — no IPC, safe on the draw path. */
+function vizOverridesForCurrentModule() {
+    return _vizModuleIdCache ? vizOverridesFor(_vizModuleIdCache) : null;
+}
 
 /**
  * Minimum gap between full redraws of the grid. ZERO — the throttle is off.

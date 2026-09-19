@@ -19,7 +19,9 @@
 import { buildMetaIndex, KIND_OPAQUE } from "./param_meta.mjs";
 import { planPages, PAGE_KNOBS, KNOBS_PER_PAGE } from "./page_plan.mjs";
 import { hasChildren, allChildKeys } from "./child_key.mjs";
-import { resolveViz, VIZ_SOURCE_DECLARED } from "./viz.mjs";
+import { isCurveId, CURVE_IDS } from "./curve_shape.mjs";
+import { vizOverridesFor } from "./viz_overrides.mjs";
+import { resolveViz, VIZ_SOURCE_DECLARED, VIZ_SOURCE_OVERRIDE, VIZ_FIELDS } from "./viz.mjs";
 
 /* Types the contract documents, plus the ones modules actually ship.
  * `toggle` is used inline by real modules but is absent from docs/MODULES.md —
@@ -353,7 +355,10 @@ export function validateContract({ id, hierarchy, chainParams, capabilities } = 
     const declared = [], inferred = [], invalidDeclared = [];
     for (const page of pages) {
         if (page.kind !== PAGE_KNOBS) continue;
-        const { groups, invalid } = resolveViz({ keys: page.keys, metaIndex: index });
+        /* With the override table, because that is what the device resolves
+         * and because an override that fails resolves to nothing visible --
+         * this validator is the only place that failure can surface. */
+        const { groups, invalid } = resolveViz({ keys: page.keys, metaIndex: index, overrides: vizOverridesFor(id) });
         for (const g of groups) {
             (g.source === VIZ_SOURCE_DECLARED ? declared : inferred).push(g);
         }
@@ -368,9 +373,66 @@ export function validateContract({ id, hierarchy, chainParams, capabilities } = 
     }
     if (invalidDeclared.length) {
         for (const v of invalidDeclared) {
+            /* An override failure reads differently: nobody can fix it by
+             * moving a param, because the module is not ours. Name the table
+             * so the finding points at the thing that can actually change. */
+            if (v.source === VIZ_SOURCE_OVERRIDE) {
+                add("warn", "viz-override-unusable",
+                    `host viz override group "${v.group}" did not resolve: ${v.reason} ` +
+                    "— fix the entry in src/shared/param_pages/viz_overrides.mjs");
+                continue;
+            }
             add("warn", "viz-declared-not-adjacent",
                 `viz group "${v.group}" (${v.kind}) is declared but its roles are not adjacent ` +
                 "on one page row, so no graphic is drawn — move the params next to each other");
+        }
+    }
+
+    /*
+     * THE VIZ VOCABULARY, CHECKED — because every way of getting it wrong is
+     * SILENT.
+     *
+     * There was no allowlist of viz field names, role names or kinds. A typo
+     * in `shapes`, an easing id that does not exist, or a `shapes` array a
+     * different length from the option list all parse fine, resolve fine, and
+     * simply draw no curvature — which is pixel-identical to not having
+     * declared anything. For a module we own that is an afternoon; for surge,
+     * whose repository we do not control, it is undiagnosable from here.
+     */
+    for (const p2 of cp) {
+        const v = p2 && p2.viz;
+        if (!v || typeof v !== "object") continue;
+        for (const f of Object.keys(v)) {
+            if (VIZ_FIELDS.indexOf(f) < 0) {
+                add("warn", "viz-unknown-field",
+                    `"${p2.key}" declares viz.${f}, which nothing reads — ` +
+                    `known fields are ${VIZ_FIELDS.join(", ")}`);
+            }
+        }
+        if (v.shapes !== undefined) {
+            if (!Array.isArray(v.shapes)) {
+                add("warn", "viz-shapes-not-array", `"${p2.key}" declares viz.shapes as ${typeof v.shapes}, which is ignored`);
+            } else {
+                for (const entry of v.shapes) {
+                    const ids = typeof entry === "string" ? [entry]
+                        : (entry && typeof entry === "object" ? Object.keys(entry).map((r) => entry[r]) : []);
+                    for (const id of ids) {
+                        if (!isCurveId(id)) {
+                            add("warn", "viz-unknown-curve",
+                                `"${p2.key}" names easing "${id}", which is not in the vocabulary ` +
+                                `(${CURVE_IDS.join(", ")}) — that stage draws straight`);
+                        }
+                    }
+                }
+                /* Positional: entry N is option N. A short array silently
+                 * leaves the tail of the enum uncurved, a long one names
+                 * options that do not exist. */
+                if (Array.isArray(p2.options) && p2.options.length !== v.shapes.length) {
+                    add("warn", "viz-shapes-length",
+                        `"${p2.key}" has ${p2.options.length} option(s) but ${v.shapes.length} shape(s) — ` +
+                        "the mapping is positional, so the difference is unmapped");
+                }
+            }
         }
     }
     if (declared.length) {

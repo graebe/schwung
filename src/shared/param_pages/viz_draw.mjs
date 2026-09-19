@@ -30,10 +30,11 @@ import {
     CHECKER, fillDithered, dashedVRule, notchCorners,
 } from "./render_page.mjs";
 import {
-    VIZ_ENVELOPE, VIZ_FILTER, VIZ_LFO, VIZ_WAVEFORM, VIZ_FADER, VIZ_SWITCH, VIZ_EQ, VIZ_SAMPLE,
+    VIZ_ENVELOPE, VIZ_FILTER, VIZ_LFO, VIZ_WAVEFORM, VIZ_FADER, VIZ_SWITCH, VIZ_EQ, VIZ_SAMPLE, VIZ_CURVE,
 } from "./viz.mjs";
 import { enumIndexOf } from "./param_meta.mjs";
 import { wavPeaks, resamplePeaks } from "./wav_peaks.mjs";
+import { curveSample, curveIdForRole } from "./curve_shape.mjs";
 import { observeLanded, easeOut, lerp } from "./anim_state.mjs";
 import { isCustomKind, drawCustom } from "./widget_registry.mjs";
 
@@ -411,10 +412,16 @@ function band(rect) {
  * Turn a polyline's breakpoints into the `yAt` closure `fillCurveMass` wants.
  *
  * The envelope is the one graph that is NOT defined per column — it is four
- * straight segments between five vertices — so its fill has to be told the same
+ * segments between five vertices — so its fill has to be told the same
  * vertices the strokes are drawn from rather than deriving the shape a second
  * time. Anything past the last vertex rests on the zero line, which is what
  * makes a short release leave the tail of the cell empty instead of filled.
+ *
+ * A vertex may carry a THIRD element, an easing id from curve_shape.mjs, which
+ * shapes the segment ENDING at that vertex. `[x, y]` and `[x, y, "linear"]`
+ * both take the untouched straight-line branch below and are pixel-identical
+ * to what this drew before curvature existed — which matters, because every
+ * envelope in the fleet snapshot is pinned on it.
  */
 function segmentsYAt(pts, restY) {
     return (px) => {
@@ -422,10 +429,41 @@ function segmentsYAt(pts, restY) {
             const [ax, ay] = pts[i], [bx, by] = pts[i + 1];
             if (px < ax || px > bx) continue;
             if (bx === ax) return Math.round(by);
-            return Math.round(ay + (by - ay) * ((px - ax) / (bx - ax)));
+            const t = (px - ax) / (bx - ax);
+            const id = pts[i + 1][2];
+            if (!id || id === "linear") return Math.round(ay + (by - ay) * t);
+            return Math.round(ay + (by - ay) * curveSample(id, t));
         }
         return restY;
     };
+}
+
+/** Does this breakpoint list bend anywhere? Lets a caller keep the cheap
+ *  `drawLine` stroke for the shapes that are still straight. */
+function segmentIsCurved(pts, i) {
+    const id = pts[i + 1] && pts[i + 1][2];
+    return !!id && id !== "linear";
+}
+
+/**
+ * Stroke a breakpoint list, from the SAME `yAt` the fill was handed.
+ *
+ * A straight segment keeps `drawLine` — one native binding, and pixel-for-
+ * pixel what shipped before curvature existed, which is what lets the fleet
+ * snapshot stay unchanged for every module that declares no curve.
+ *
+ * A curved one goes per column through `drawStepCurve`. Not a sampled
+ * polyline: `tools/param-pages/curve_bench.mjs` measured both, and per-column
+ * is exact at every width while its cost is bounded by the number of distinct
+ * y values — 13 at this band height — rather than by the segment's width.
+ * `xEnd` is exclusive there, hence `bx + 1`.
+ */
+function strokeSegments(ctx, pts, yAt) {
+    for (let i = 0; i < pts.length - 1; i++) {
+        const [ax, ay] = pts[i], [bx, by] = pts[i + 1];
+        if (!segmentIsCurved(pts, i)) { drawLine(ctx, ax, ay, bx, by); continue; }
+        drawStepCurve(ctx, Math.round(ax), Math.round(bx) + 1, yAt);
+    }
 }
 
 function fillCurveMass(ctx, x0, xEnd, yAt, baseY, topY, botY, mirrorAt = null) {
@@ -464,7 +502,7 @@ function optionText(metaIndex, key, values) {
  * (Movy's own reference width) whenever this draws a full-width row. Partial
  * envelopes (2-3 roles) use Movy's span-relative formula directly.
  */
-export function drawEnvelope(ctx, rect, roles, values, metaIndex) {
+export function drawEnvelope(ctx, rect, roles, values, metaIndex, opts) {
     /* Time order, which is draw order. HOLD is here because an AHR envelope is
      * a real shape, not a degenerate ADSR: gate and ducker both declare
      * attack/hold/release and nothing else. Leaving hold out of this list did
@@ -477,59 +515,118 @@ export function drawEnvelope(ctx, rect, roles, values, metaIndex) {
     const x0 = rect.x, x1 = rect.x + rect.w;
     const { topY, botY: bodyBottom } = band(rect);
 
+    /*
+     * INVERT: the rest state is FULL, and the stages describe a departure
+     * DOWNWARD. A ducker, a gate and a tremolo all want that, and none of them
+     * could say it before -- the ducker shipped a whole custom widget for it.
+     *
+     * Geometrically it is one swap: `peakY` is where the excursion ends up and
+     * `zeroY` is where it rests, so inverting exchanges them and every formula
+     * below keeps working. What does NOT survive the swap is anything that
+     * assumed top < bottom, which is why the clip bounds are taken from
+     * `band()` separately (they are the BOX, not the curve) and why the insets
+     * carry a sign. Reusing peak/zero as the clip pair -- which is what this
+     * did -- collapses an inverted envelope to a single row.
+     */
+    const invert = !!(opts && opts.invert);
+    const geo = {
+        peakY: invert ? bodyBottom : topY,
+        zeroY: invert ? topY : bodyBottom,
+        bandTop: topY,
+        bandBot: bodyBottom,
+        curves: (opts && opts.curves) || EMPTY_CURVES,
+    };
+
     /* drawFullAdsr is Movy's fixed ADSR reference geometry -- four named
      * segments, no room for a fifth. Anything else, including a 4-role set
      * that contains hold, goes to the span-relative builder. */
     const isPlainAdsr = present.length === 4 && !roles.hold;
     if (isPlainAdsr) {
-        drawFullAdsr(ctx, x0, x1, topY, bodyBottom, roles, values, metaIndex);
+        drawFullAdsr(ctx, x0, x1, geo, roles, values, metaIndex);
     } else {
-        drawPartialEnv(ctx, x0, x1, topY, bodyBottom, present, roles, values, metaIndex);
+        drawPartialEnv(ctx, x0, x1, geo, present, roles, values, metaIndex);
     }
 }
 
-function drawFullAdsr(ctx, x0, x1, topY, baseY, roles, values, metaIndex) {
+const EMPTY_CURVES = {};
+
+/** Toward the zero line: +1 for a normal envelope, -1 for an inverted one.
+ *  The original `susY + 1` / `baseY - 1` insets are this with the sign
+ *  assumed, and assuming it is what breaks when the envelope falls. */
+function insetSign(geo) { return geo.zeroY >= geo.peakY ? 1 : -1; }
+
+/** A 2x2 `dot` nudged one pixel back along the excursion and kept inside the
+ *  box. Reproduces the old `Math.max(topY, y - 1)` exactly when not inverted. */
+function dotY(geo, y) {
+    const nudged = insetSign(geo) > 0 ? y - 1 : y;
+    return Math.max(geo.bandTop, Math.min(geo.bandBot - 1, nudged));
+}
+
+function drawFullAdsr(ctx, x0, x1, geo, roles, values, metaIndex) {
+    const { peakY, zeroY, bandTop, bandBot, curves } = geo;
     const a = frac(metaIndex, roles.attack, values);
     const d = frac(metaIndex, roles.decay, values);
     const s = frac(metaIndex, roles.sustain, values);
     const r = frac(metaIndex, roles.release, values);
 
     const W = x1 - x0;                       // Movy's reference W is 128
-    const usableH = baseY - topY;            // 13
+    const usableH = zeroY - peakY;           // 13, and SIGNED when inverted
     const gateX = x0 + W * (88 / 128);        // fixed note-off reference
 
     const peakX = x0 + Math.round(a * W * (26 / 128));
     let sustStartX = peakX + W * (4 / 128) + Math.round(d * W * (24 / 128));
     if (sustStartX > gateX - W * (2 / 128)) sustStartX = gateX - W * (2 / 128);
-    const susY = baseY - Math.round(s * usableH);
+    const susY = zeroY - Math.round(s * usableH);
     let relEndX = gateX + W * (4 / 128) + Math.round(r * W * (33 / 128));
     if (relEndX > x1 - 1) relEndX = x1 - 1;
 
-    /* The mass, under the same four segments the strokes draw. `segmentsYAt`
-     * interpolates the SAME breakpoints rather than re-deriving the envelope,
-     * so the fill cannot disagree with the line about where the curve is —
-     * which is the whole contract of fillCurveMass. */
-    fillCurveMass(ctx, x0, x1, segmentsYAt([
-        [x0, baseY], [peakX, topY], [sustStartX, susY], [gateX, susY], [relEndX, baseY],
-    ], baseY), baseY, topY, baseY);
+    /*
+     * The vertices, ONCE. They used to be written twice — an inline array for
+     * the fill and then four `drawLine` calls restating the same numbers — and
+     * a curved segment cannot be expressed that way at all: the stroke and the
+     * mass would each have to derive the bend and would drift apart on any
+     * rounding difference. `fillCurveMass`'s contract is that it is handed the
+     * same closure the stroke is drawn from, so there is exactly one of both.
+     *
+     * A third element on a vertex is the easing of the segment ENDING there.
+     */
+    const pts = [
+        [x0, zeroY],
+        [peakX, peakY, curves.attack],
+        [sustStartX, susY, curves.decay],
+        [gateX, susY],
+        [relEndX, zeroY, curves.release],
+    ];
+    const yAt = segmentsYAt(pts, zeroY);
 
-    drawLine(ctx, x0, baseY, peakX, topY);            // attack rise
-    drawLine(ctx, peakX, topY, sustStartX, susY);     // decay fall
-    drawLine(ctx, sustStartX, susY, gateX, susY);     // sustain plateau
-    drawLine(ctx, gateX, susY, relEndX, baseY);       // release fall
+    /*
+     * The mass is the signal that PASSES, so it is bounded by silence — and
+     * silence is the bottom of the band in both orientations, not `zeroY`.
+     * They are the same row for an ordinary envelope, which is why this read
+     * as `baseY` before; under invert `zeroY` is the TOP and filling to it
+     * shades the notch instead of the signal, i.e. exactly the complement of
+     * the thing the fill means everywhere else on the page.
+     *
+     * Clip to the BOX for the same reason: peak and zero swap under invert and
+     * would then bracket nothing.
+     */
+    fillCurveMass(ctx, x0, x1, yAt, bandBot, bandTop, bandBot);
+    strokeSegments(ctx, pts, yAt);
 
-    knockoutV(ctx, sustStartX, susY + 1, baseY - 1);
-    knockoutV(ctx, gateX, susY + 1, baseY - 1);
+    const inset = insetSign(geo);
+    knockoutV(ctx, sustStartX, susY + inset, zeroY - inset);
+    knockoutV(ctx, gateX, susY + inset, zeroY - inset);
 
-    dot(ctx, Math.max(x0, peakX - 1), topY);
-    dot(ctx, sustStartX - 1, Math.max(topY, susY - 1));
-    dot(ctx, gateX - 1, Math.max(topY, susY - 1));
-    dot(ctx, Math.min(x1 - 2, relEndX - 1), baseY - 1);
+    dot(ctx, Math.max(x0, peakX - 1), dotY(geo, peakY + inset));
+    dot(ctx, sustStartX - 1, dotY(geo, susY));
+    dot(ctx, gateX - 1, dotY(geo, susY));
+    dot(ctx, Math.min(x1 - 2, relEndX - 1), dotY(geo, zeroY));
 }
 
-function drawPartialEnv(ctx, leftX, xEnd, topY, baseY, present, roles, values, metaIndex) {
+function drawPartialEnv(ctx, leftX, xEnd, geo, present, roles, values, metaIndex) {
+    const { peakY, zeroY, bandTop, bandBot, curves } = geo;
     const rightX = xEnd - 1;
-    const usableH = baseY - topY;
+    const usableH = zeroY - peakY;           /* SIGNED when inverted */
     const span = rightX - leftX;
 
     const has = (r) => present.includes(r);
@@ -560,9 +657,9 @@ function drawPartialEnv(ctx, leftX, xEnd, topY, baseY, present, roles, values, m
     const IMPLIED_SUSTAIN = 0.5;
     const impliedSustain = !has("sustain") && has("decay") && has("release");
     /* A/D with no release must still fall to the floor -- that case was right. */
-    const susY = has("sustain") ? baseY - Math.round(val.sustain * usableH)
-               : impliedSustain ? baseY - Math.round(IMPLIED_SUSTAIN * usableH)
-               : baseY;
+    const susY = has("sustain") ? zeroY - Math.round(val.sustain * usableH)
+               : impliedSustain ? zeroY - Math.round(IMPLIED_SUSTAIN * usableH)
+               : zeroY;
     /* The plateau is what makes the stage visible as HELD rather than as a kink
      * between two falls, so the implied case draws one too. */
     const drawsPlateau = has("sustain") || impliedSustain;
@@ -589,22 +686,22 @@ function drawPartialEnv(ctx, leftX, xEnd, topY, baseY, present, roles, values, m
     const pts = [];
     let cur;
     if (has("attack")) {
-        pts.push([leftX, baseY]);
+        pts.push([leftX, zeroY]);
         cur = Math.min(rightX - 2, leftX + 4 + Math.round(val.attack * span * 0.4));
-        pts.push([cur, topY]);
+        pts.push([cur, peakY, curves.attack]);
     } else {
         cur = leftX;
-        pts.push([cur, topY]);
+        pts.push([cur, peakY]);
     }
     /* Hold is a plateau AT THE PEAK, between the attack rise and whatever
      * falls next -- for an AHR (gate, ducker) that is the release. */
     if (has("hold")) {
         const holdEnd = Math.min(rightX - 2, cur + Math.round(val.hold * span * 0.3));
-        if (holdEnd > cur) { pts.push([holdEnd, topY]); cur = holdEnd; }
+        if (holdEnd > cur) { pts.push([holdEnd, peakY]); cur = holdEnd; }
     }
     if (has("decay")) {
         cur = Math.min(rightX - 2, cur + 4 + Math.round(val.decay * span * 0.35));
-        pts.push([cur, susY]);
+        pts.push([cur, susY, curves.decay]);
     } else if (has("sustain")) {
         pts.push([cur, susY]);
     }
@@ -614,15 +711,20 @@ function drawPartialEnv(ctx, leftX, xEnd, topY, baseY, present, roles, values, m
     }
     if (has("release")) {
         const endX = Math.min(rightX, cur + 4 + Math.round(val.release * span * 0.4));
-        pts.push([endX, baseY]);
+        pts.push([endX, zeroY, curves.release]);
     }
 
     /* Same mass, same vertices — a 2- or 3-role envelope is the same kind of
      * object as a 4-role one and must not read as a different treatment. */
-    fillCurveMass(ctx, leftX, xEnd, segmentsYAt(pts, baseY), baseY, topY, baseY);
+    const yAt = segmentsYAt(pts, zeroY);
+    /* Bounded by silence — the band's floor — not by the rest level. See the
+     * note in drawFullAdsr; `restY` above is still `zeroY`, because past the
+     * last vertex the envelope has RETURNED to rest, which under invert is
+     * full level and must not read as a tail of silence. */
+    fillCurveMass(ctx, leftX, xEnd, yAt, bandBot, bandTop, bandBot);
 
-    for (let i = 0; i < pts.length - 1; i++) drawLine(ctx, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
-    for (const [px, py] of pts) dot(ctx, Math.min(xEnd - 2, Math.max(leftX, px - 1)), Math.max(topY, py - 1));
+    strokeSegments(ctx, pts, yAt);
+    for (const [px, py] of pts) dot(ctx, Math.min(xEnd - 2, Math.max(leftX, px - 1)), dotY(geo, py));
     /*
      * Only where the plateau actually ENDS inside the cell. With no release the
      * plateau runs to rightX, so the marker was clamped to xEnd-2 and drew a
@@ -630,7 +732,10 @@ function drawPartialEnv(ctx, leftX, xEnd, topY, baseY, present, roles, values, m
      * where braids showed it, since braids declares attack/decay/sustain and no
      * release. A boundary at the boundary of the picture marks nothing.
      */
-    if (drawsPlateau && cur < rightX - 1) knockoutV(ctx, cur, susY + 1, baseY - 1);
+    if (drawsPlateau && cur < rightX - 1) {
+        const inset = insetSign(geo);
+        knockoutV(ctx, cur, susY + inset, zeroY - inset);
+    }
 }
 
 /* ----------------------------------------------------------------- filter */
@@ -1682,8 +1787,110 @@ export function drawSample(ctx, rect, roles, values, metaIndex, baseValues) {
 
 /* --------------------------------------------------------------- dispatch */
 
+/* ------------------------------------------------------------------ curve */
+
+/**
+ * One enum that selects a TRANSFER CURVE, drawn as that curve.
+ *
+ * The same idea `waveform` already applies to oscillator shapes, and the
+ * seventeen easing enums across nine fleet modules are the population it
+ * serves -- they had no picture at all, so the cell showed a word and the
+ * shape it names was something you had to know.
+ *
+ * The curve is drawn rising left to right through the band, with the house
+ * CHECKER mass beneath it, from the same `yAt` the stroke uses. Always
+ * per-column: see curve_shape.mjs for why there is no sampled variant.
+ */
+export function drawCurve(ctx, rect, key, values, metaIndex, shapes) {
+    const { topY, botY } = band(rect);
+    const pad = 2;
+    const x0 = rect.x + pad;
+    const xEnd = rect.x + rect.w - pad;
+    if (xEnd - x0 < 3) return;
+
+    /*
+     * NO ANSWER, NO PICTURE. An unresolvable value must not fall back to
+     * `shapes[0]` -- that draws a specific curve the module never reported,
+     * and it is indistinguishable from it having reported that one.
+     */
+    if (!Array.isArray(shapes) || !metaIndex) return;
+    const idx = enumIndexOf(metaIndex.getOrGuess(key), values ? values[key] : undefined);
+    if (idx < 0 || idx >= shapes.length) return;
+
+    /*
+     * A per-stage entry has no single shape to show. It is only meaningful
+     * inside an envelope, where each stage draws its own; on a lone cell the
+     * attack is the representative one, and failing that whatever it declares
+     * first, so the cell still says something rather than going blank.
+     */
+    let id = shapes[idx];
+    if (id && typeof id === "object") {
+        const vals = Object.keys(id).map((r) => id[r]);
+        id = curveIdForRole(id, "attack");
+        if (id === "linear" && vals.length && vals.indexOf("linear") < 0) id = curveIdForRole(vals[0], null);
+    } else {
+        id = curveIdForRole(id, null);
+    }
+
+    const w = xEnd - x0 - 1;
+    const h = botY - topY;
+    const yAt = (px) => {
+        const t = w > 0 ? (px - x0) / w : 1;
+        return botY - Math.round(curveSample(id, t) * h);
+    };
+    fillCurveMass(ctx, x0, xEnd, yAt, botY, topY, botY);
+    drawStepCurve(ctx, x0, xEnd, yAt);
+}
+
+/**
+ * Resolve a group's declared `shapes` against the LIVE value of its curve
+ * selector, into the per-stage easing ids drawEnvelope wants.
+ *
+ * Resolution has to happen here and not in viz.mjs, because viz.mjs resolves
+ * groups without ever seeing a value — it knows the keys and the metadata and
+ * nothing else.
+ *
+ * A READ THAT DID NOT ANSWER DRAWS NO CURVATURE. An unresolvable index falls
+ * back to straight segments, which is the picture that shipped before this
+ * existed — never to `shapes[0]`, which would state a curve the module never
+ * reported and is indistinguishable from it having reported one.
+ */
+function envelopeOpts(group, values, metaIndex) {
+    const invert = group.invert === true;
+    const byRole = group.curveShapes;
+    const roles = group.roles || {};
+    if (!byRole || !metaIndex) return invert ? { invert } : undefined;
+
+    /* The easing one selector currently names, or null if it named nothing we
+     * can resolve. `stage` lets a single whole-envelope selector still carry a
+     * per-stage object -- the Ducker's `Pump` is linear down and cubic-out up. */
+    const resolve = (role, stage) => {
+        const shapes = byRole[role];
+        const key = roles[role];
+        if (!Array.isArray(shapes) || !key) return null;
+        const idx = enumIndexOf(metaIndex.getOrGuess(key), values ? values[key] : undefined);
+        if (idx < 0 || idx >= shapes.length) return null;   /* no answer, no curvature */
+        return curveIdForRole(shapes[idx], stage);
+    };
+
+    /* A stage's OWN selector wins over a whole-envelope one. Surge declares
+     * per stage, the Ducker declares once, and a module could do both. */
+    const forStage = (stage) => resolve("curve_" + stage, stage) || resolve("curve", stage) || "linear";
+
+    const curves = {
+        attack: forStage("attack"),
+        decay: forStage("decay"),
+        release: forStage("release"),
+    };
+    if (curves.attack === "linear" && curves.decay === "linear" && curves.release === "linear") {
+        return invert ? { invert } : undefined;
+    }
+    return { invert, curves };
+}
+
 const DRAW = {
-    [VIZ_ENVELOPE]: (ctx, rect, group, values, metaIndex) => drawEnvelope(ctx, rect, group.roles, values, metaIndex),
+    [VIZ_ENVELOPE]: (ctx, rect, group, values, metaIndex) =>
+        drawEnvelope(ctx, rect, group.roles, values, metaIndex, envelopeOpts(group, values, metaIndex)),
     [VIZ_FILTER]: (ctx, rect, group, values, metaIndex) => drawFilter(ctx, rect, group.roles, values, metaIndex),
     [VIZ_LFO]: (ctx, rect, group, values, metaIndex) => drawLfo(ctx, rect, group.roles, values, metaIndex),
     [VIZ_EQ]: (ctx, rect, group, values, metaIndex) => drawEq(ctx, rect, group.roles, values, metaIndex),
@@ -1695,6 +1902,8 @@ const DRAW = {
         drawSwitch(ctx, rect, group.roles.value, values, metaIndex, anim, nowMs),
     [VIZ_SAMPLE]: (ctx, rect, group, values, metaIndex, anim, nowMs, baseValues) =>
         drawSample(ctx, rect, group.roles, values, metaIndex, baseValues),
+    [VIZ_CURVE]: (ctx, rect, group, values, metaIndex) =>
+        drawCurve(ctx, rect, group.roles.value, values, metaIndex, group.curveShapes),
 };
 
 /**

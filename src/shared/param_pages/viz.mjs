@@ -42,6 +42,29 @@ export const VIZ_FADER = "fader";
 export const VIZ_SWITCH = "switch";
 export const VIZ_EQ = "eq";
 export const VIZ_SAMPLE = "sample";
+/* A single enum that selects a TRANSFER CURVE, drawn as the curve itself.
+ * Seventeen such enums across nine fleet modules had no picture at all --
+ * `waveform` is the same idea for oscillator shapes and was the model. */
+export const VIZ_CURVE = "curve";
+
+/*
+ * EVERY FIELD A `viz` OBJECT MAY CARRY.
+ *
+ * Exported so `validate_contract.mjs` can warn on anything else, because the
+ * failure mode of a mistyped field is not an error -- it is a graphic that
+ * quietly does not change. Add a field to the parser and to this list in the
+ * same commit, or the validator starts rejecting something that works.
+ */
+export const VIZ_FIELDS = [
+    "group",        /* the id shared by every param in one graphic */
+    "role",         /* this param's part in it */
+    "kind",         /* the graphic type, when the roles do not imply it */
+    "span",         /* false: lend a value without claiming a cell */
+    "extra_keys",   /* values the picture needs that have no cell */
+    "extraKeys",    /* the camel spelling declaredExtraKeys also accepts */
+    "invert",       /* rest at full, stages depart downward */
+    "shapes",       /* positional option -> easing id map */
+];
 
 export const VIZ_SOURCE_DECLARED = "declared";
 export const VIZ_SOURCE_OVERRIDE = "override";
@@ -201,6 +224,59 @@ function stemsAgree(items) {
  * `normalize()`, so no separate chainParams argument is needed here — the
  * metaIndex already carries it.
  */
+/*
+ * THE GROUP-LEVEL FIELDS, AND WHY THEY LIVE IN ONE FUNCTION.
+ *
+ * A viz object is read in TWO places: `collectDeclared` below, for what a
+ * module declares, and the host-override branch in `resolveVizInner`. The
+ * override branch historically read a strictly smaller set — `group`, `role`,
+ * `kind`, and nothing else — so a field added to the declared path alone
+ * works for every module we own and silently does nothing for the ones we do
+ * not, which is precisely the set the override table exists to serve.
+ *
+ * That failure is invisible: no error, no log, just a module that keeps its
+ * old picture. So the fields are promoted HERE, by one function both branches
+ * call, and `tests/host/test_viz_override_parity.sh` fails if either branch
+ * learns a field the other has not.
+ */
+function promoteGroupFields(g, v) {
+    if (v.kind && !g.kind) g.kind = v.kind;
+    /* Rest state is FULL and the stages describe a departure downward. Any
+     * member may declare it, exactly as any member may declare the kind. */
+    if (v.invert === true) g.invert = true;
+    /*
+     * The positional option -> easing map, KEYED BY THE ROLE THAT DECLARES IT,
+     * because one selector per envelope is not the shape the fleet has.
+     *
+     * The Ducker has a single `curve` knob covering every stage. Surge has
+     * THREE -- env1_attack_shape, env1_decay_shape, env1_release_shape -- one
+     * beside each stage time, and it is the module this feature exists for. A
+     * single `shapes` array cannot express that, so a role-keyed map holds
+     * both: `curve` for one selector over all stages, and
+     * `curve_attack` / `curve_decay` / `curve_release` for a selector each.
+     *
+     * (On a SINGLE-param `curve` cell there is no group and no role, so the
+     * value there is the bare array. Different consumer, different shape;
+     * the two paths never meet.)
+     *
+     * Resolved against the enum's live value at DRAW time, because resolution
+     * needs a value and nothing here has one.
+     */
+    if (Array.isArray(v.shapes) && v.role) {
+        if (!g.curveShapes) g.curveShapes = {};
+        if (!g.curveShapes[v.role]) g.curveShapes[v.role] = v.shapes;
+    }
+}
+
+/** Copy the promoted fields onto the object the renderer receives. Only
+ *  set what was declared, so a group that says nothing adds no keys and
+ *  cannot perturb an existing snapshot. */
+function applyGroupFields(built, g) {
+    if (g.invert) built.invert = true;
+    if (g.curveShapes) built.curveShapes = g.curveShapes;
+    return built;
+}
+
 function collectDeclared(keys, metaIndex, invalid) {
     const groups = new Map();   /* group id -> { kind, roles: {role: {key, slot}} } */
     const singles = [];         /* declared single-param kinds: waveform/fader/switch/sample */
@@ -238,7 +314,7 @@ function collectDeclared(keys, metaIndex, invalid) {
              * there said it could. A spanning widget whose values live on
              * another page then drew its "no answer" state forever. */
             if (v.role) g.roles[v.role] = { key, slot, span: v.span !== false, viz: v };
-            if (v.kind && !g.kind) g.kind = v.kind;
+            promoteGroupFields(g, v);
         } else if (v.kind) {
             /*
              * A CUSTOM KIND CLAIMS NOTHING UNLESS IT CAN BE DRAWN.
@@ -259,7 +335,7 @@ function collectDeclared(keys, metaIndex, invalid) {
              * abandoned at once.
              */
             if (isCustomKind(v.kind) && !isWidgetAvailable(v.kind)) return;
-            singles.push({ kind: v.kind, key, slot, extraKeys: declaredExtraKeys(v) });
+            singles.push({ kind: v.kind, key, slot, extraKeys: declaredExtraKeys(v), shapes: v.shapes });
         }
     });
 
@@ -286,11 +362,11 @@ function collectDeclared(keys, metaIndex, invalid) {
             invalid.push({ group: g.groupId, kind, reason: "roles not adjacent on one row" });
             continue;
         }
-        const built = {
+        const built = applyGroupFields({
             kind, group: g.groupId, roles: mapRoles(g.roles),
             keys: spanning.map((r) => r.key),
             ...span(slots), source: VIZ_SOURCE_DECLARED,
-        };
+        }, g);
         /* A group's kind may be declared on any member, so its extra keys may
          * be too — take the first member that names some. */
         for (const r of Object.values(g.roles)) {
@@ -305,6 +381,9 @@ function collectDeclared(keys, metaIndex, invalid) {
             slotStart: s.slot, slotSpan: 1, source: VIZ_SOURCE_DECLARED,
         };
         if (s.extraKeys && s.extraKeys.length) g2.extraKeys = s.extraKeys;
+        /* A standalone `curve` cell needs the same option -> easing map a
+         * grouped one does; it is the only thing that says WHICH curve. */
+        if (Array.isArray(s.shapes)) g2.curveShapes = s.shapes;
         out.push(g2);
     }
     return { groups: out, excluded };
@@ -1162,8 +1241,12 @@ function resolveVizInner({ keys, metaIndex, overrides }) {
             if (v.group) {
                 if (!overridden.has(v.group)) overridden.set(v.group, { kind: v.kind || null, roles: {} });
                 const g = overridden.get(v.group);
-                if (v.role) g.roles[v.role] = { key, slot };
-                if (v.kind && !g.kind) g.kind = v.kind;
+                /* `viz: v` and `span` are retained for the same reasons the
+                 * declared branch retains them — an override that could not
+                 * carry extra_keys or a value-only role would be a second,
+                 * weaker dialect of the same declaration. */
+                if (v.role) g.roles[v.role] = { key, slot, span: v.span !== false, viz: v };
+                promoteGroupFields(g, v);
             } else if (v.kind) {
                 claimed.add(key);
                 out.push({
@@ -1173,15 +1256,38 @@ function resolveVizInner({ keys, metaIndex, overrides }) {
             }
         });
         for (const [groupId, g] of overridden) {
-            const slots = Object.values(g.roles).map((r) => r.slot);
+            /* Only SPANNING roles size the graphic and get claimed — the same
+             * rule the declared branch applies. Without it a `span: false`
+             * override both widened the picture and stole the cell whose
+             * value it was only supposed to lend. */
+            const spanning = Object.values(g.roles).filter((r) => r.span !== false);
+            const slots = spanning.map((r) => r.slot);
             const kind = g.kind || inferKindFromRoles(Object.keys(g.roles));
-            if (!kind || !isAdjacentRun(slots)) continue;
-            for (const r of Object.values(g.roles)) claimed.add(r.key);
-            out.push({
+            /* An override that cannot be drawn is REPORTED, not dropped in
+             * silence. It is the one authoring path with no module-side
+             * iteration -- the module belongs to someone else -- so a
+             * mis-keyed role or a group split across the row boundary has to
+             * turn up in `validate.mjs` rather than as a picture that never
+             * changed. */
+            if (!kind) { invalid.push({ group: groupId, kind: null, reason: "override names no kind and its roles infer none", source: VIZ_SOURCE_OVERRIDE }); continue; }
+            if (!slots.length) { invalid.push({ group: groupId, kind, reason: "override has no spanning roles", source: VIZ_SOURCE_OVERRIDE }); continue; }
+            if (!isAdjacentRun(slots)) { invalid.push({ group: groupId, kind, reason: "override roles not adjacent on one row", source: VIZ_SOURCE_OVERRIDE }); continue; }
+            /* And it must be drawable, the check the declared branch makes at
+             * its own two sites — an override naming an unregistered custom:
+             * kind used to claim its cells and then draw nothing at all. */
+            if (isCustomKind(kind) && !isWidgetAvailable(kind)) continue;
+            for (const r of spanning) claimed.add(r.key);
+            out.push(applyGroupFields({
                 kind, group: groupId, roles: mapRoles(g.roles),
-                keys: Object.values(g.roles).map((r) => r.key),
+                keys: spanning.map((r) => r.key),
                 ...span(slots), source: VIZ_SOURCE_OVERRIDE,
-            });
+            }, g));
+            /* Same as the declared branch: the group's extra keys may be
+             * named by any member, so take the first that names some. */
+            for (const r of Object.values(g.roles)) {
+                const ek = declaredExtraKeys(r.viz);
+                if (ek) { out[out.length - 1].extraKeys = ek; break; }
+            }
         }
     }
 

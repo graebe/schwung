@@ -188,7 +188,7 @@ forge	Voice/Osc	waveform	detected	cv_wave
 forge	Voice/Osc - 2	switch	detected	cv_xfm
 forge	Voice/Setup - 2	switch	detected	cv_mute
 fork	Global Settings	switch	detected	fallthrough
-freak	Cycling Envelope	envelope	detected	cycle_attack_ms,cycle_decay_ms
+freak	Cycling Envelope	envelope	override	cycle_attack_ms,cycle_decay_ms
 freak	Cycling Envelope	switch	detected	cycle_bipolar
 freak	Cycling Envelope	switch	detected	cycle_retrig
 freak	Cycling Envelope	switch	detected	cycle_sync
@@ -525,12 +525,12 @@ superboom	Main	fader	detected	inputGain
 superboom	Main	fader	detected	output
 superboom	Seal	switch	detected	limiter
 superboom	Skulpt - 2	switch	detected	micControl
-surge	Amp Envelope	envelope	detected	env1_attack,env1_decay,env1_sustain,env1_release
+surge	Amp Envelope	envelope	override	env1_attack,env1_decay,env1_sustain,env1_release
 surge	Filter 1	filter	detected	filter1_type,filter1_cutoff,filter1_resonance
 surge	Filter 2	filter	detected	filter2_type,filter2_cutoff,filter2_resonance
 surge	Filter 2	switch	detected	f2_cf_is_offset
 surge	Filter 2	switch	detected	f2_link_resonance
-surge	Filter Envelope	envelope	detected	env2_attack,env2_decay,env2_sustain,env2_release
+surge	Filter Envelope	envelope	override	env2_attack,env2_decay,env2_sustain,env2_release
 surge	LFO 1	envelope	detected	lfo0_attack,lfo0_decay
 surge	LFO 1	waveform	detected	lfo0_shape
 surge	LFO 1 - 2	envelope	detected	lfo0_hold,lfo0_sustain,lfo0_release
@@ -556,7 +556,7 @@ surge	LFO 6	waveform	detected	lfo5_shape
 surge	LFO 6 - 2	envelope	detected	lfo5_hold,lfo5_sustain,lfo5_release
 surge	LFO 6 - 2	switch	detected	lfo5_unipolar
 surge	MPE	switch	detected	mpe_enabled
-surge	Main	envelope	detected	env1_attack,env1_decay,env1_sustain,env1_release
+surge	Main	envelope	override	env1_attack,env1_decay,env1_sustain,env1_release
 surge	Main	fader	detected	volume
 surge	Main	filter	detected	filter1_cutoff,filter1_resonance
 surge	Mixer	fader	detected	level_noise
