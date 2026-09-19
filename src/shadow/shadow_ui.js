@@ -44,7 +44,7 @@ import {
     truncateText
 } from '/data/UserData/schwung/shared/chain_ui_views.mjs';
 
-import { decodeDelta } from '/data/UserData/schwung/shared/input_filter.mjs';
+import { decodeDelta, setLED, invalidateLedCache } from '/data/UserData/schwung/shared/input_filter.mjs';
 /* The knob-grid chrome's footer rule row, which the chain editor's slot
  * indicator column stops above. The header/footer/list DRAWING that used to be
  * imported here went to chain_editor_chrome.mjs, so both editors do it once. */
@@ -19256,12 +19256,73 @@ function moduleClaimedCcs(moduleId) {
  * returns without writing or logging, which is also what lets this restate
  * rather than memoise — the shim drops the flag unilaterally on the
  * display-mode edge and at init, and a JS mirror of that would latch. */
+/*
+ * A MODULE THAT PAINTED THE PADS LEAVES THEM PAINTED, and nothing repaints
+ * them.
+ *
+ * `pad_block` only ever governed INPUT. Move keeps writing its own pad LEDs
+ * underneath a component UI (the shim strips those only in overtake), but it
+ * is event-driven -- it writes an LED when its value CHANGES -- so once a
+ * module has overwritten the grid with its own colours, Move has no reason to
+ * write anything and the module's colours simply stay there after it is gone.
+ * Reported from the device as the pads not going back to normal after closing
+ * a module.
+ *
+ * The module cannot fix this itself. There is no teardown hook, and the exits
+ * cannot be enumerated -- Back, a Track tap, Menu, Shift+Vol, co-run, a jump
+ * to Global Settings -- which is the same reason the flag below is reconciled
+ * from an invariant rather than cleared at each exit. So the restore belongs
+ * on the same edge: whoever notices the pads have been handed back is the one
+ * who can put them right.
+ *
+ * `shadow_get_pad_led_snapshot()` is what Move believes it is showing: outside
+ * overtake the shim's cache tracks MOVE's writes, not ours, so it is exactly
+ * the state to go back to.
+ *
+ * Drained a few per tick rather than in one burst -- the LED queue takes
+ * SHADOW_LED_MAX_UPDATES_PER_TICK (16) per SPI frame into an 80-byte mailbox
+ * it shares with Move's own packets, and 32 forced writes in one frame would
+ * be refused rather than queued.
+ */
+let padLedsOwnedByModule = false;
+let padRestoreQueue = [];
+const PAD_RESTORE_PER_TICK = 8;
+
 function reconcilePadBlock() {
     if (isTextEntryActive()) return;
     const moduleOwnsPads = view === VIEWS.COMPONENT_EDIT &&
                            loadedModuleUi && loadedModuleUi.tick &&
                            !coRunUiActive();
-    if (!moduleOwnsPads && typeof host_pad_block === "function") host_pad_block(0);
+
+    if (moduleOwnsPads) {
+        padLedsOwnedByModule = true;
+        padRestoreQueue = [];
+    } else {
+        if (padLedsOwnedByModule) {
+            padLedsOwnedByModule = false;
+            const snap = (typeof shadow_get_pad_led_snapshot === "function")
+                ? shadow_get_pad_led_snapshot() : null;
+            padRestoreQueue = [];
+            for (let note = 68; note <= 99; note++) {
+                /* A note Move never lit has no cached colour; dark is the
+                 * truthful answer for it, not "leave whatever is there". */
+                const c = snap && typeof snap[note] === "number" ? snap[note] : 0;
+                padRestoreQueue.push([note, c]);
+            }
+            /* Our belief about the hardware is now somebody else's painting. */
+            invalidateLedCache();
+        }
+        if (typeof host_pad_block === "function") host_pad_block(0);
+    }
+
+    if (padRestoreQueue.length) {
+        const n = Math.min(PAD_RESTORE_PER_TICK, padRestoreQueue.length);
+        for (let i = 0; i < n; i++) {
+            const [note, colour] = padRestoreQueue[i];
+            setLED(note, colour, true);
+        }
+        padRestoreQueue = padRestoreQueue.slice(n);
+    }
 }
 
 function reconcileCcClaim() {
