@@ -103,9 +103,30 @@ export const LABEL_CHARS = 5;
 /** Uppercase, ascii-folded — the register this grid sets in. font4x5 has no
  *  lowercase, so a mixed-case name would silently lose glyphs. */
 function caps(s) { return asciiFold(String(s == null ? "" : s)).toUpperCase(); }
-/** fitText/shortenLabel measure through ctx.textWidth; hand them Tamzen. */
-const TZ_MEASURE = { textWidth: tzWidth };
-function fitDev(ctx, s, maxWidth) { return caps(fitText(TZ_MEASURE, caps(s), maxWidth)); }
+/*
+ * MEASURE IN THE FACE THAT WILL DRAW IT.
+ *
+ * This measured in TAMZEN and its one consumer -- the cell value, below --
+ * hands the result to drawLabelCell, which prints with fontPrint4x5 and
+ * re-truncates against fontWidth4x5. Tamzen is a 6px cell; font4x5 is
+ * proportional and narrower, so every value was trimmed to a budget ~30%
+ * tighter than the one it was actually drawn into.
+ *
+ * It shows up as a UNIT LOSING ITS LAST LETTER. "100 ms" is 35px in Tamzen
+ * against a 30px budget, so it was cut to "100 m" -- while in the face that
+ * draws it, it is 26px and fits with room to spare. Two-digit values were
+ * unaffected ("20 ms" is 29px in Tamzen), which is why this reads as "it
+ * breaks at three digits" rather than as a measurement bug, and why it
+ * survived: the failure is silent, plausible, and looks like a cell that is
+ * simply too small.
+ *
+ * Every module declaring ms or Hz over 99 had it -- ducker's 0-1000 ms
+ * release included.
+ *
+ * Widening the budget can only ADD characters, and drawLabelCell still
+ * truncates against the real face, so nothing can overflow as a result.
+ */
+function fitDev(ctx, s, maxWidth) { return caps(fitText(FONT4_MEASURE, caps(s), maxWidth)); }
 
 /*
  * What a cell or the held-knob strip should SHOW for a value.
