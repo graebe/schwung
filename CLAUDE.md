@@ -546,6 +546,16 @@ layout, and the shape-edit verbs. Read it before touching `modules/chain/dsp/`.
 - **Use `key`, not `param`**, for editable `params` entries — metadata comes from
   `chain_params`, and a module missing it gets an invented `float 0..1 step 0.01`
   knob writing `0.058750` into an enum.
+- **An enum whose OPTIONS ARE NUMERALS cannot have its wire convention
+  inferred, and the host no longer tries.** For `["1".."32"]` every index of 1
+  or more is also an option name, so `"15"` is both index 15 and the name of
+  option 14. The learner asked the name question first and latched — permanently,
+  on the shared meta — so an index-wired `length` drew a 16-step pattern as
+  **15** and *wrote the name* `"16"` into a `set_param` doing `atoi + 1`:
+  seventeen steps. It latches nothing on an ambiguous value now and every
+  resolver falls back to index-first, so such an enum must declare
+  `wire_format: "index"` or `options_as_string: true`. One module can need both
+  (trance gate: `slot` is 1-based by name, `length` is an index).
 - **A plain read of a modulated key answers the BASE**, never the plugin's value
   — the plugin holds the effective value the overlay keeps writing into it. The
   driven value is asked for as `<key>:effective` (#276).
@@ -662,6 +672,14 @@ in `src/shadow/shadow_ui.js`.** The load-bearing claims, so you know when to loo
   four, one read stop each. Before it, the only way to get a fact to a widget
   was to give it a knob, which is how a module shipped a read-only cell whose
   whole job was carrying a number to the cell beside it.
+- **A canvas page NAMES ITS OWN KNOBS (`page_knobs`), or it is the grid.** The
+  default is the level's first eight in authored order, so a picture page and
+  the cells page behind it carry the *same eight keys* and neither can be
+  arranged without deranging the other — taking Length off a live ring page
+  took it off the settings grid too. Declared keys need only exist in
+  `chain_params`, never in the level's `knobs`, because a control that belongs
+  only on the picture page is the case it is for; an undeclared one is dropped
+  and logged rather than becoming an invented `float 0..1`.
 - **A module can own a PAGE (`as_page`), and it is a PAGE_KNOBS page with a
   drawer, NOT a new kind.** That is what makes the encoders work with no input
   code and the reads happen at all: 22 controller branches test PAGE_KNOBS, and
