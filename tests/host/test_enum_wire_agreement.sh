@@ -49,34 +49,47 @@ for (const [label, meta, raw, wantIdx, wantShown] of [
   check(`${label}: write round-trips`, wire === raw, `got ${JSON.stringify(wire)}`);
 }
 
-/*
- * THE LEARNER MUST NOT INVENT A CONVENTION FROM AN AMBIGUOUS VALUE.
- *
- * It asked the name question first, so a numeral enum wired by INDEX taught
- * it "name" off its very first read -- options.indexOf("15") is 14 -- and the
- * latch is permanent. The cell then drew options[14] = "15" for a 16-step
- * pattern, and formatParamForSet wrote the NAME, so picking "16" sent "16" to
- * a set_param doing atoi+1: seventeen steps. The display is the half that got
- * reported; the write is the half that mattered.
- *
- * Both readings explain the value, so there is nothing to learn from it.
- */
 const { learnEnumWireFormat } = await import(B + "param_format.mjs");
 
-{
-  const meta = { type: "enum", options: opts };          /* undeclared */
-  const got = learnEnumWireFormat(meta, "15");           /* what the device said */
-  check("ambiguous value latches NOTHING", got === null, `got ${got}`);
-  check("...so the enum stays index-wired", enumWiresNames(meta) === false, "");
-  check("...display still reads 16", formatParamValue("15", meta) === "16",
-        formatParamValue("15", meta));
-  check("...enumIndexOf still reads 15", enumIndexOf(meta, "15") === 15,
-        String(enumIndexOf(meta, "15")));
-  check("...and the write stays an index", formatParamForSet(15, meta) === "15",
-        JSON.stringify(formatParamForSet(15, meta)));
+/*
+ * THE FLEET, AND WHY THE OBVIOUS FIX IS THE WRONG ONE.
+ *
+ * A numeral enum makes the two readings inseparable -- "0" is both index 0 and
+ * the NAME of whichever option is spelled "0" -- so the tempting repair is to
+ * make the learner refuse to latch on a value both conventions explain.
+ *
+ * That breaks shipping modules. Measured over tests/fixtures/module-contracts
+ * .json: 66 of the fleets 967 enums are ambiguous AND undeclared, and the two
+ * below are name-wired with the ambiguous value sitting at their CENTRE --
+ * the likeliest thing either reports. Refusing to latch sends them to
+ * index-first, i.e. to the bottom of their own range:
+ *
+ *     minijv lfo1offset "0"  -> "-100"
+ *     essaim v_octave   "0"  -> "-3"      "+1" -> "-2"
+ *
+ * So the learner keeps guessing name-first, which is what it has always done,
+ * and the fix is confined to formatParamValue agreeing with the other two.
+ * A module that cannot afford the guess DECLARES -- see below, and CHAIN.md.
+ */
+for (const [label, options, reads] of [
+  ["minijv lfo1offset", ["-100", "-50", "0", "+50", "+100"], ["0", "-50", "+100"]],
+  ["essaim v_octave",   ["-3", "-2", "-1", "0", "+1", "+2"], ["0", "+1", "-3"]],
+]) {
+  for (const raw of reads) {
+    const meta = { type: "enum", options: options.slice() };   /* undeclared */
+    learnEnumWireFormat(meta, raw);                            /* a DEVICE value */
+    const shown = formatParamValue(raw, meta);
+    check(`${label} reports ${JSON.stringify(raw)} -> shows it back`,
+          shown === raw, `got ${JSON.stringify(shown)}`);
+  }
 }
 
-/* A DECLARATION is never learned over, in either direction. */
+/*
+ * A DECLARATION is never learned over, in either direction -- which is how a
+ * module escapes the guess above. The trance gate is the case: numeral options
+ * wired by INDEX, where guessing name-first drew a 16-step pattern as 15 and
+ * WROTE 17.
+ */
 for (const [label, meta, raw, wantShown, wantWire] of [
   ["wire_format:index ", { type: "enum", options: opts, wire_format: "index" }, "15", "16", "15"],
   ["options_as_string ", { type: "enum", options: opts, options_as_string: true }, "16", "16", "16"],

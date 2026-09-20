@@ -187,43 +187,11 @@ export function learnEnumWireFormat(meta, raw) {
     if (raw === null || raw === undefined) return null;
     const s = String(raw);
     if (s === "" || s.trim() === "") return null;
-    const byName = meta.options.indexOf(s) >= 0 || meta.options.indexOf(s.trim()) >= 0;
-    const num = Number(s.trim());
-    const numeric = isFinite(num);
-    /*
-     * AN ENUM WHOSE OPTIONS ARE NUMERALS CANNOT TEACH THIS, and asking the
-     * name question first made it answer anyway.
-     *
-     * `length` on the trance gate is options ["1".."32"] wired as the INDEX.
-     * The module reports "15" for a 16-step pattern, `options.indexOf("15")`
-     * is 14, and the name branch latched WIRE_NAME on the first read -- so
-     * every index the module ever reports is also one of its own option
-     * names and the verdict is unfalsifiable once made. It then poisoned all
-     * three resolvers off one cached meta: the cell rendered options[14] =
-     * "15", and formatParamForSet wrote the NAME, so picking "16" sent "16"
-     * to a set_param doing atoi+1 and produced SEVENTEEN steps. The display
-     * bug is what gets reported; the write is the one that matters.
-     *
-     * When both readings explain the value there is nothing to learn, so
-     * learn nothing -- the same answer this already gives a value that
-     * NEITHER convention explains, and for the same reason: a latch is
-     * permanent, and an unfalsifiable guess is worse than an open question.
-     * With nothing latched every resolver falls back to index-first, which
-     * is the documented default and the only reading the three can agree on.
-     *
-     * A module whose numeral enum really is wired by name says so --
-     * `options_as_string: true` or `wire_format: "name"`, both checked above
-     * and neither ever learned over.
-     */
-    if (byName && numeric) {
-        const idx = Math.round(num);
-        if (idx >= 0 && idx < meta.options.length) return null;
-    }
-    if (byName) {
+    if (meta.options.indexOf(s) >= 0 || meta.options.indexOf(s.trim()) >= 0) {
         meta.wire_format = WIRE_NAME;
         return WIRE_NAME;
     }
-    if (numeric) {
+    if (isFinite(Number(s.trim()))) {
         meta.wire_format = WIRE_INDEX;
         return WIRE_INDEX;
     }
