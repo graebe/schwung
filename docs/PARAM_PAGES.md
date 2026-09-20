@@ -1937,10 +1937,19 @@ its io draws no card for a declaring parameter, and a parameter that declares
 nothing is untouched. So a module may ship `card_script` for years and change
 nothing anywhere it is not supported.
 
-⚠ **`frameCtx` exposes `fillRect` / `print` / `textWidth` only.** The context the
-host hands the grid also carries `line`, `setPixel`, `fillCircle`, `drawCircle`
-and `drawArc` (`shadow_ui.js`'s `movy` object), and the widget design spec names
-`setPixel` and `drawLine` as part of a frame context — so a drawer that wants
-them today must fall back to `fillRect` (a Bresenham built on it still clips
-correctly). Passing the optional primitives through, clipped, is a separate and
-generic change to `frame_ctx.mjs`; it is not part of the card.
+**A card gets the same primitives a cell widget does** — `fillRect`, `print`,
+`textWidth`, `setPixel`, `line`, `fillCircle`, `drawCircle` and `drawArc`, every
+one of them frame-local and clipped, because `frame_ctx.mjs` implements them on
+its own `fillRect` rather than delegating (see *The primitives are implemented,
+not delegated*, above). `drawArc(cx, cy, r, startDeg, sweepDeg, color)` takes
+**0° at twelve o'clock, increasing clockwise**.
+
+This paragraph used to say the opposite — that a card had `fillRect` / `print` /
+`textWidth` only and a drawer wanting a line had to build Bresenham on top. That
+was true when the card landed and stopped being true when the primitives moved
+into `frame_ctx.mjs`, and the note outlived the fact by long enough to send at
+least one module author off to hand-roll a circle. The cost note still holds and
+is the thing to remember instead: each primitive is a **run** of `fillRect`
+calls, so a filled disc of r=8 is ~17 crossings rather than 1. That is the price
+of clipping being structural. At cell and card sizes it is the right trade; a
+drawer filling a large disc every frame should reach for a rect.
