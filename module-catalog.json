@@ -2208,7 +2208,7 @@
       "github_repo": "graebe/schwung-trance-gate",
       "default_branch": "main",
       "asset_name": "trance-gate-module.tar.gz",
-      "min_host_version": "1.0.0"
+      "min_host_version": "1.5.0"
     }
   ]
 }
