@@ -1831,6 +1831,23 @@ Keys already carrying a cell on the page are skipped in the controller, not the
 planner: one canvas can serve both a custom page and the preset browser, and
 those two pages carry different key lists.
 
+**`page_knobs` NAMES THE PAGE'S OWN KNOBS, and without it a picture page and
+the grid behind it cannot differ.** The default is the level's first eight in
+authored order, so the two pages are the *same eight keys*: any arrangement of
+one is an arrangement of both. They rarely want the same thing. The trance
+gate's ring is what you hold while the pattern plays — slot, the two amounts,
+the envelope — while Length and Rate are settings you set once and leave, and
+taking them off the ring took them off the settings grid too.
+
+The declared keys need only exist in `chain_params`; they are deliberately
+**not** required to appear in the level's `knobs`, because a control that
+belongs *only* on the picture page is the case this exists for. An undeclared
+key is **dropped and logged**, never passed through — the grid invents a
+`float 0..1 step 0.01` knob for metadata it cannot find and writes `0.058750`
+into it, so a typo would otherwise produce a dial that looks right and is wired
+to nothing. Capped at `KNOBS_PER_PAGE`; `alignGroupsToRows` is not applied (there
+are no cells to reflow), so the declared order is the drawn order.
+
 **IT IS A PAGE_KNOBS PAGE WITH A DRAWER, NOT A NEW KIND**, and that is the whole
 reason it works. Twenty-two places in `page_controller` branch on PAGE_KNOBS:
 reads, knob turns, touch, the touch strip, announce, dive targets, the list

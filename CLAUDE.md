@@ -867,6 +867,14 @@ in `src/shadow/shadow_ui.js`.** The load-bearing claims, so you know when to loo
   four, one read stop each. Before it, the only way to get a fact to a widget
   was to give it a knob, which is how a module shipped a read-only cell whose
   whole job was carrying a number to the cell beside it.
+- **A canvas page NAMES ITS OWN KNOBS (`page_knobs`), or it is the grid.** The
+  default is the level's first eight in authored order, so a picture page and
+  the cells page behind it carry the *same eight keys* and neither can be
+  arranged without deranging the other — taking Length off a live ring page
+  took it off the settings grid too. Declared keys need only exist in
+  `chain_params`, never in the level's `knobs`, because a control that belongs
+  only on the picture page is the case it is for; an undeclared one is dropped
+  and logged rather than becoming an invented `float 0..1`.
 - **A module can own a PAGE (`as_page`), and it is a PAGE_KNOBS page with a
   drawer, NOT a new kind.** That is what makes the encoders work with no input
   code and the reads happen at all: 22 controller branches test PAGE_KNOBS, and

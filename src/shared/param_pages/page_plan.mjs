@@ -456,6 +456,15 @@ export function levelShortNames(lvl) {
  * the jog rotation carrying the level's own knobs -- so it is reached by paging
  * rather than by diving, and the eight encoders do there exactly what they do
  * on the level's grid.
+ *
+ * `page_knobs` OVERRIDES which knobs, and without it a picture page and the
+ * grid behind it cannot differ. The default is the level's first eight in
+ * authored order, so the two pages are the SAME EIGHT KEYS and any change to
+ * one is a change to both -- a live ring wanting Slot and a settings grid
+ * wanting Length are not the same page and were forced to be. The named keys
+ * need only be declared in `chain_params`; a key reachable ONLY from the
+ * picture page is a legitimate thing to want, and is why this does not read
+ * the level's `knobs`.
  */
 function declaredCanvasExtraKeys(p) {
     const raw = Array.isArray(p.extra_keys) ? p.extra_keys
@@ -470,7 +479,40 @@ function declaredCanvasExtraKeys(p) {
     return out;
 }
 
+/*
+ * The knob keys a canvas page declares, VALIDATED against chain_params.
+ *
+ * An undeclared key is DROPPED rather than passed through. The grid invents a
+ * `float 0..1 step 0.01` knob for metadata it cannot find and writes
+ * `0.058750` into it, so a typo here would silently hand the user a working-
+ * looking dial wired to nothing -- the same failure a missing chain_params
+ * entry causes, arriving through a route nobody would think to check.
+ */
+function declaredCanvasPageKnobs(p, declared) {
+    const raw = Array.isArray(p.page_knobs) ? p.page_knobs
+              : (Array.isArray(p.pageKnobs) ? p.pageKnobs : null);
+    if (!raw) return null;
+    const out = [];
+    const dropped = [];
+    for (const k of raw) {
+        if (typeof k !== "string" || !k) continue;
+        if (out.indexOf(k) >= 0) continue;
+        if (!declared.has(k)) { dropped.push(k); continue; }
+        out.push(k);
+        if (out.length >= KNOBS_PER_PAGE) break;
+    }
+    if (dropped.length) {
+        console.log("page_plan: canvas page " + p.key +
+                    " drops undeclared page_knobs: " + dropped.join(", "));
+    }
+    return out;
+}
+
 function canvasPageParams(chainParams) {
+    const declared = new Set();
+    for (const p of chainParams || []) {
+        if (p && typeof p.key === "string" && p.key) declared.add(p.key);
+    }
     const out = new Map();
     for (const p of chainParams || []) {
         if (!p || typeof p.key !== "string") continue;
@@ -494,6 +536,9 @@ function canvasPageParams(chainParams) {
              * Measured on the uncapped version -- twenty keys took a
              * three-knob page from a knob refresh every 4 ticks to every 24. */
             extraKeys: declaredCanvasExtraKeys(p),
+            /* null = "the level's first eight", the behaviour every existing
+             * module gets and must keep. */
+            pageKnobs: declaredCanvasPageKnobs(p, declared),
             name: p.name || p.short_name || p.key,
         });
     }
@@ -1164,7 +1209,9 @@ export function planPages({ hierarchy, chainParams, mode, visible, unresolved,
                  * level with no knobs still gets the page -- it simply has
                  * nothing to turn, which is a legitimate thing for a display
                  * page to be. */
-                keys: authored.slice(0, perPage === Infinity ? authored.length : perPage),
+                keys: (cp.pageKnobs && cp.pageKnobs.length)
+                    ? cp.pageKnobs
+                    : authored.slice(0, perPage === Infinity ? authored.length : perPage),
                 childLevel: hasChildren(lvl) ? lvl : null,
                 shortNames: levelShortNames(lvl),
                 authored: true,

@@ -102,6 +102,65 @@ ok(!celled, "the canvas key never gets a cell of its own");
 ok(!plan.pages.some((p) => !p.canvas && (p.keys || []).length === 1 && p.keys[0] === "face"),
    "and there is no orphan page holding just it");
 
+/*
+ * `page_knobs` -- A PICTURE PAGE AND THE GRID BEHIND IT ARE NOT THE SAME PAGE.
+ *
+ * The default above is the levels own knobs, which means the two surfaces
+ * carry the SAME EIGHT KEYS and neither can be arranged without deranging the
+ * other: taking Length off a live ring page took it off the settings grid too.
+ * They want different things, so a canvas page may name its own list.
+ *
+ * The named keys need only be DECLARED in chain_params -- deliberately not
+ * "listed in the levels knobs", because a control that belongs only on the
+ * picture page is the case this exists for.
+ */
+{
+  const CPK = CP.map((p) => (p.key === "face"
+    ? { ...p, page_knobs: ["c", "a"] } : p));
+  const pk = planPages({ hierarchy: HIER, chainParams: CPK });
+  const cpk = pk.pages.find((p) => p.canvas);
+  ok(cpk && JSON.stringify(cpk.keys) === JSON.stringify(["c", "a"]),
+     "page_knobs names the canvas pages knobs, in its own order");
+  const gridk = pk.pages.find((p) => !p.canvas && (p.keys || []).length);
+  ok(gridk && JSON.stringify(gridk.keys) === JSON.stringify(["a", "b", "c"]),
+     "and the grid behind it is untouched -- the two lists are independent");
+}
+
+/*
+ * AN UNDECLARED KEY IS DROPPED, NEVER PASSED THROUGH. The grid invents a
+ * `float 0..1 step 0.01` knob for metadata it cannot find and writes
+ * `0.058750` into it, so a typo would otherwise hand the user a dial that
+ * looks right and is wired to nothing.
+ */
+{
+  const CPX = CP.map((p) => (p.key === "face"
+    ? { ...p, page_knobs: ["a", "nope", "c"] } : p));
+  const px = planPages({ hierarchy: HIER, chainParams: CPX });
+  const cpx = px.pages.find((p) => p.canvas);
+  ok(cpx && JSON.stringify(cpx.keys) === JSON.stringify(["a", "c"]),
+     "an undeclared page_knobs key is dropped rather than invented");
+}
+
+/* Capped at the eight physical knobs; a ninth has nowhere to go. */
+{
+  const nine = ["a", "b", "c", "a2", "b2", "c2", "d2", "e2", "f2"];
+  const extra = nine.slice(3).map((k) => ({ key: k, name: k, type: "float", min: 0, max: 1, step: 0.01 }));
+  const CPN = CP.concat(extra).map((p) => (p.key === "face"
+    ? { ...p, page_knobs: nine } : p));
+  const pn = planPages({ hierarchy: HIER, chainParams: CPN });
+  const cpn = pn.pages.find((p) => p.canvas);
+  ok(cpn && cpn.keys.length === 8, "page_knobs is capped at the eight physical knobs");
+}
+
+/* An ABSENT page_knobs must behave exactly as before -- every module in the
+ * fleet relies on the default and none of them declares the field. */
+{
+  const pd = planPages({ hierarchy: HIER, chainParams: CP });
+  const cpd = pd.pages.find((p) => p.canvas);
+  ok(cpd && JSON.stringify(cpd.keys) === JSON.stringify(["a", "b", "c"]),
+     "no page_knobs still means the levels own knobs");
+}
+
 /* Without as_page it stays a dive-in cell -- the OLD behaviour is untouched. */
 const CP2 = CP.map((p) => (p.key === "face" ? { ...p, as_page: false } : p));
 const plan2 = planPages({ hierarchy: HIER, chainParams: CP2 });
