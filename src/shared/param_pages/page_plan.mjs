@@ -1025,6 +1025,10 @@ export function planPages({ hierarchy, chainParams, mode, visible, unresolved,
          * balancedChunk); the remainder is spread evenly so a level with nine
          * keys yields 8 + 1 rather than an orphan page holding one control —
          * and a level with seventeen yields 8 + 5 + 4 rather than 8 + 8 + 1. */
+        /* Where this level's own pages begin, so a canvas page DECLARED AHEAD
+         * of every cell-bearing param can LEAD them rather than trail them.
+         * See the custom-UI-page block below. */
+        const levelPageStart = pages.length;
         const parts = chunk(authoredKeys, perPage);
         const spill = perPage === Infinity ? 0 : authoredKeys.length % perPage;
         if (spill > 0 && extraKeys.length > 0) {
@@ -1097,7 +1101,22 @@ export function planPages({ hierarchy, chainParams, mode, visible, unresolved,
         }
 
         /*
-         * CUSTOM UI PAGES, after this level's grids and before its menu.
+         * CUSTOM UI PAGES, and WHERE they sit is the module's to say.
+         *
+         * These were emitted unconditionally after the level's grids, which
+         * made the declaration order in `params` a lie: a module naming its
+         * canvas first still got it second, and the only way to open on the
+         * picture was to jump the cursor there at entry -- which fixes the
+         * landing and leaves the bank bar reading the other way round.
+         *
+         * A canvas key that precedes every cell-bearing param now LEADS the
+         * level; anything else trails, exactly as before. The rule is the
+         * authored order, so a module gets what it wrote down either way.
+         *
+         * Zero modules in the captured fleet declare `as_page`
+         * (tests/fixtures/module-contracts.json), so nothing that exists today
+         * moves -- but the baseline is pinned, so anything that did would show
+         * up as a reviewed diff rather than as a surprise.
          *
          * A page the MODULE draws, carrying THIS LEVEL'S OWN KNOBS. That is the
          * whole trick and it is why this is a PAGE_KNOBS page and not a new
@@ -1114,14 +1133,30 @@ export function planPages({ hierarchy, chainParams, mode, visible, unresolved,
          * `alignKnobs` is deliberately NOT applied: its business is reflowing
          * cells so a graphic stays inside one row, and there are no cells here.
          */
-        for (const key of paramKeys(lvl)) {
+        /* The first param that earns a CELL. A canvas key before it leads. */
+        let firstCellKey = -1;
+        {
+            const pk = paramKeys(lvl);
+            for (let i = 0; i < pk.length; i++) {
+                if (!canvasPages.has(pk[i]) && !isHiddenParam(lvl, pk[i], isVisible)) {
+                    firstCellKey = i;
+                    break;
+                }
+            }
+        }
+        let leadAt = levelPageStart;
+
+        const orderedKeys = paramKeys(lvl);
+        for (let ki = 0; ki < orderedKeys.length; ki++) {
+            const key = orderedKeys[ki];
             const cp = canvasPages.get(key);
             if (!cp) continue;
             if (isHiddenParam(lvl, key, isVisible)) continue;
             /* Already merged into the level's preset browser above. */
             if (cp.presetBrowser && lvl.list_param && lvl.count_param) continue;
             emitted.add(key);
-            pages.push({
+            const leads = firstCellKey < 0 || ki < firstCellKey;
+            const canvasPage = ({
                 kind: PAGE_KNOBS,
                 name: claimName(cp.name || title),
                 level: levelKey,
@@ -1138,6 +1173,8 @@ export function planPages({ hierarchy, chainParams, mode, visible, unresolved,
                 canvas: { key: cp.key, script: cp.script, overlay: cp.overlay,
                           extraKeys: cp.extraKeys },
             });
+            if (leads) pages.splice(leadAt++, 0, canvasPage);
+            else pages.push(canvasPage);
         }
 
         /* Menu LAST, after this level's grids. A preset browser goes first
