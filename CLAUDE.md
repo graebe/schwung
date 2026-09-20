@@ -570,6 +570,18 @@ layout, and the shape-edit verbs. Read it before touching `modules/chain/dsp/`.
 - **Use `key`, not `param`**, for editable `params` entries — metadata comes from
   `chain_params`, and a module missing it gets an invented `float 0..1 step 0.01`
   knob writing `0.058750` into an enum.
+- **An enum whose OPTIONS ARE NUMERALS is ambiguous, and the three resolvers
+  must at least AGREE about it.** For `["1".."32"]` every index of 1 or more is
+  also an option name, so `"15"` is both index 15 and the name of option 14.
+  `formatParamValue` read every value as an index while `enumIndexOf` and
+  `formatParamForSet` asked `enumWiresNames` first — so a name-wired enum
+  displayed one option off what it wrote. minijv's LFO offset and essaim's
+  octave show it today: a reported `"0"` draws as `-100` / `-3`. **Do not
+  "fix" it by refusing to latch on an ambiguous value** — that is the obvious
+  repair and it sends those same 66 fleet enums to the bottom of their range,
+  because the ambiguous value is their centre. A module that cannot afford the
+  guess declares `wire_format` or `options_as_string` (trance gate: `slot` is
+  1-based by name, `length` an index).
 - **A plain read of a modulated key answers the BASE**, never the plugin's value
   — the plugin holds the effective value the overlay keeps writing into it. The
   driven value is asked for as `<key>:effective` (#276).

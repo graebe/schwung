@@ -43,6 +43,44 @@ Modules expose `ui_hierarchy` (menu structure + knob mappings) via get_param:
 
 Types: `float` (min/max/step), `int` (min/max), `enum` (options). Optional: `default`, `unit`, `display_format`.
 
+#### An enum whose OPTIONS ARE NUMERALS must declare its wire convention
+
+An enum's wire value is either the option's **index** or the option's **name**,
+and three functions resolve it — `enumIndexOf` (read), `formatParamForSet`
+(write) and `formatParamValue` (display). The host learns the convention from a
+value the plugin reports (`learnEnumWireFormat`) and latches it.
+
+That inference is **impossible** when the options are numerals. For
+`["1", … "32"]` every index of 1 or more is also one of the option names, so
+`"15"` is both index 15 and the name of option 14, and nothing in the value can
+arbitrate. The learner used to ask the name question first and latch on it, off
+the first read, permanently, onto the shared metadata object. The trance gate's
+`length` is index-wired: a 16-step pattern rendered as **15**, and the knob
+wrote the *name* `"16"` into a `set_param` doing `atoi + 1` — **17 steps**. The
+display is the half that gets reported; the write is the half that matters.
+
+**The learner keeps guessing name-first, and that is deliberate.** Refusing to
+latch on an ambiguous value looks like the principled repair and breaks
+shipping modules: 66 of the fleet's 967 enums are ambiguous and undeclared, and
+for minijv's LFO offset and essaim's octave the ambiguous value is the CENTRE
+of the range — the likeliest thing either reports — so declining to guess sends
+them to index-first, i.e. to the bottom of their own scale.
+
+What is fixed is that all three resolvers now read a latched convention the
+same way. An enum that cannot afford the guess must say which it speaks:
+
+```json
+{"key": "length", "type": "enum", "options": ["1", "…", "32"], "wire_format": "index"}
+{"key": "slot",   "type": "enum", "options": ["1", "…", "8"],  "options_as_string": true}
+```
+
+`options_as_string: true` and `wire_format: "name"` are equivalent; both are
+overrides and are never learned over. Non-numeral options (`["LP","HP","BP"]`,
+`["1/8","1/16"]`) are unambiguous — `Number("LP")` is `NaN` — and need no
+declaration. A module may legitimately use both conventions at once: the trance
+gate's `slot` is 1-based by name while `length` and `cursor` are indices, off
+option lists that look identical.
+
 ### Reading a modulated parameter — four forms, one rule
 
 While a chain-mod source (slot LFO, etc.) drives `<prefix>:<key>`, the overlay

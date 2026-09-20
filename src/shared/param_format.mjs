@@ -81,7 +81,25 @@ export function formatParamValue(rawValue, meta) {
         return isFinite(num) ? num.toFixed(2) : String(rawValue);
     }
     if (meta.type === "enum" && Array.isArray(meta.options)) {
-        const idx = Math.round(Number(rawValue));
+        /*
+         * SAME PRECEDENCE AS enumIndexOf AND formatParamForSet, which is the
+         * whole point: three functions resolve an enum's wire value and this
+         * was the only one that did not ask which convention the plugin
+         * speaks. It read every value as an index.
+         *
+         * For an enum whose OPTIONS ARE NUMERALS that is a silent off-by-one
+         * on the one path a user actually looks at. A module wiring names and
+         * reporting "16" from options ["1".."32"] had it rendered as
+         * options[16] -- "17" -- while the very same value round-tripped
+         * correctly through the other two. Reported from the device as a
+         * length knob reading 17 for a 16-step pattern.
+         *
+         * A name-wired enum now resolves by name first, an index-wired one by
+         * number first. Enums whose options are not numerals are unaffected
+         * either way: Number("LP") is NaN, so they already fell through.
+         */
+        const byName = enumWiresNames(meta) ? meta.options.indexOf(String(rawValue)) : -1;
+        const idx = byName >= 0 ? byName : Math.round(Number(rawValue));
         if (idx >= 0 && idx < meta.options.length) return meta.options[idx];
         return String(rawValue);
     }
